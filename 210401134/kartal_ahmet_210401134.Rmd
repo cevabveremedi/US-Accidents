@@ -1,0 +1,766 @@
+---
+title: 'Proje Rapor : Ahmet Suat Kartal 210401134'
+output:
+  html_document:
+    keep_md: true
+    df_print: paged
+  html_notebook: default
+---
+
+```{r Managing packages, echo=FALSE, message=FALSE, warning=FALSE}
+
+# Timer set
+start.time <- Sys.time()
+#####################
+
+
+
+# Package manager
+
+packages <- c("data.table", "ggplot2", "ggmap", "maps", "mapdata", "dplyr", "tidyverse", "scales", "lubridate")
+for (package in packages) {
+  if (!requireNamespace(package, quietly = TRUE)) {
+    install.packages(package, repos = "http://cran.us.r-project.org")
+  }
+}
+
+# adding repos parameter in install.packages to bypass "trying to use CRAN without setting a mirror" error.
+
+library(data.table)
+library(ggplot2)
+library(ggmap)
+library(maps)
+library(mapdata)
+library(dplyr)
+library(tidyverse)
+library(scales)
+library(lubridate)
+
+
+#####################
+# Calculate execution time
+end.time <- Sys.time()
+time.taken <- end.time - start.time
+message("[LOG] Managing packages: ", time.taken)
+
+```
+
+
+# Q1 : Problem tanımı
+
+Sigorta şirketimiz, müşteri kazalarının sıklığı nedeniyle istenilen kar hedeflerine ulaşamamaktadır. Kazaların sıklığı; müşterilerin dikkatsizliği, hava durumu ve yol koşulları gibi faktörlerin bir kombinasyonu nedeniyle artmakta, bu da kaza tazminat ödemelerinin artması gibi giderlere yol açarak şirketin karlılığını olumsuz yönde etkilemektedir. İşte bu rapor, şirketin karşılaştığı bu sorunu ele alarak çözmek üzere planlanan stratejiyi detaylandırmaktadır.
+
+# Q2 : Proje Amacı
+
+Bu proje, [US Accidents (2016 - 2023)](https://www.kaggle.com/datasets/sobhanmoosavi/us-accidents) veri setini kullanarak kazaların sıklıkla gerçekleştiği bölgeleri belirlemeyi ve bu bölgeleri müşterilerimize bildirerek, sürücülerin bu bölgelerde daha dikkatli olmaları ve kaza riskini azaltmalarını sağlamayı amaçlamaktadır. Bu projenin başarısı, şirketin karlılığını artırmanın yanı sıra, müşteri memnuniyetini ve trafik güvenliğini artırarak toplumsal fayda sağlayacaktır. Analizlerimizin, şirketin stratejik karar alma süreçlerine nasıl etki edeceğini ayrıntılı bir şekilde açıklayan bu rapor, projenin temel hedef ve etkilerini ortaya koymaktadır.
+
+Proje kapsamında, aşağıdaki analiz etaplarının gerçekleştirilmesi planlanmaktadır:
+
+* Kaza sıklığını **zamana göre** analiz etmek için, zaman seri analizi kullanılarak kazaların belirli zamanlarda daha yaygın olup olmadığı belirlenecektir.
+* Kaza sıklığını **yere göre** analiz etmek için, coğrafi istatistikler kullanılarak kazaların belirli bölgelerde daha yaygın olup olmadığı belirlenecektir.
+* Kaza nedenlerini analiz etmek için, **regresyon analizi** kullanılarak kazaların en yaygın nedenlerinin neler olduğu belirlenecektir.
+
+Projenin sonucunda elde edilecek sonuçlar, uygulamanın geliştirilmesinde önemli bir rol oynayacaktır. Örneğin, kazaların belirli zamanlarda veya bölgelerde daha yaygın olduğu belirlenirse, uygulama bu zamanlarda veya bölgelerde sürücüleri daha fazla uyaracak şekilde geliştirilebilir. Kazaların en yaygın nedenlerinin belirlenmesi de, uygulamanın bu nedenleri azaltmak için nasıl uyarlanabileceğinin belirlenmesine yardımcı olacaktır.
+
+# Q3 : Veri seti keşifsel analizi
+
+### Veri Seti Toplama Yöntemi
+
+2016'dan 2023'e kadar olan dönemde ABD'deki trafik kazalarının bilgilerini içeren bu veri seti, [Kaggle](https://www.kaggle.com) veri paylaşım platformundan toplanmıştır.
+
+### Veri Seti Yapısı
+
+```{r Reading the file, echo=FALSE, message=FALSE, warning=FALSE}
+
+# Timer set
+start.time <- Sys.time()
+#####################
+
+
+
+# Using max number of threads available to read the file faster. src: https://stackoverflow.com/a/56404131
+setDTthreads(0L)
+
+# 1) Reading only the first row of the file to store every column name.
+# 2) Reading the rest of the file with selected necessary columns.
+# Reason: reading & analyzing the whole file takes so much time and memory space.
+
+filename <- "US_Accidents_March23.csv"
+originalDB <- read.csv(filename, nrows = 1, header=TRUE, sep=",") # First row of the original DT, with every column.
+accidentsDB <- fread(filename, select = c("Severity", "Start_Time", "End_Time", "Start_Lng", "Start_Lat", "City", "State", "Street", "Weather_Condition", "Bump", "Crossing", "Junction", "Stop", "Traffic_Calming", "Traffic_Signal"))
+
+
+
+#####################
+# Calculate execution time
+end.time <- Sys.time()
+time.taken <- end.time - start.time
+message("[LOG] Reading the file: ", time.taken)
+
+```
+
+```{r Getting data and general statistics, echo=FALSE, message=FALSE, warning=FALSE}
+
+# Timer set
+start.time <- Sys.time()
+#####################
+
+
+
+totalRow <- nrow(accidentsDB) / 1000000 # total number of rows (Million) in the data we are currently analyzing.
+totalCol <- ncol(originalDB) # total number of cols in the original DF
+Columns <- colnames(originalDB) # vector containing the names of the columns
+
+
+
+#####################
+# Calculate execution time
+end.time <- Sys.time()
+time.taken <- end.time - start.time
+message("[LOG] Getting data and general statistics: ", time.taken)
+
+```
+
+Veri seti, `r format(round(totalRow, digits=2), nsmall=2)` milyondan fazla kayıt içeren `r totalCol` sütundan oluşmaktadır. Her bir satır, bir trafik kazasını temsil etmektedir ve sütunlar da aşağıdaki gibidir:
+
+`r data.frame(Columns)`
+
+Bu verilerin analizinde kullanılmasını beklediğimiz başlıca özellikler şunlardır:
+
+* **Severity:** Kazanın şiddetini 1 (küçük) ile 4 (büyük) arasında bir sayı olarak sınıflandırır.
+* **Start_Time & End_Time:** Kazanın başlangıç ve bitiş saatini ve tarihini belirtir, genellikle trafiğin kapanıp açılmasıyla ilişkilidir.
+* **Start_Lat & Start_Lng:** Kazanın başlangıç noktasının enlem ve boylam koordinatlarını belirtir.
+* **End_Lat & End_Lng:** Kazanın bitiş noktasının enlem ve boylam koordinatlarını belirtir.
+* **Distance.mi.:** Kazanın başlangıç ve bitiş noktaları arasındaki mesafeyi mil cinsinden verir.
+* **Street, City, State:** Kazanın meydana geldiği lokasyonu belirtir.
+* **Weather_Timestamp & Weather_Condition:** Hava durumunu (örneğin, yağmurlu, karlı, açık) ve kaydedildiği saati belirtir.
+* **Temperature.F.:** Kazanın meydana geldiği sıradaki sıcaklığı Fahrenheit cinsinden belirtir.
+* **Bump, Crossing, Junction:** Kazanın yakınında tümsek, yaya geçidi ve kavşak, olup olmadığını belirtir.
+* **Stop, Traffic_Calming, Traffic_Signal:** Kazanın yakınında stop işareti, trafik yavaşlatıcı ve trafik ışığı olup olmadığını belirtir.
+
+Bahsi geçen bazı özellikleri gösteren veri setinin ön görsellemesi aşağıda verilmiştir:
+
+```{r Showing the dataset, echo=FALSE, message=FALSE, warning=FALSE}
+accidentsDB
+```
+
+### Veri Seti Kalitesi
+
+Veri seti, son derece kapsamlı ve genel olarak iyi kalitededir ve asağıdaki tabloda da görüldüğü üzere bu analiz sırasında incelenmesi planlanan sütunlarda geçersiz veri bulunmamaktadır.
+
+
+```{r Searching for missing or invalid info, echo=FALSE, message=FALSE, warning=FALSE}
+
+# Timer set
+start.time <- Sys.time()
+#####################
+
+# Check NA, src: https://stackoverflow.com/a/66572810
+colSums(is.na(accidentsDB))
+
+# Check invalid severity
+invalid_severity <- subset(accidentsDB, !(Severity %in% 1:4))
+
+if (nrow(invalid_severity) > 0) {
+  print(invalid_severity)
+} 
+
+# Check empty values on each column used
+
+count_empty_weather <- sum(accidentsDB$Weather_Condition == "")
+perc_empty_weather <- (count_empty_weather / (totalRow * 1000000)) * 100
+
+
+count_empty_city <- sum(accidentsDB$City == "")
+perc_empty_city <- (count_empty_city / (totalRow * 1000000)) * 100
+
+count_empty_street <- sum(accidentsDB$Street == "")
+perc_empty_street <- (count_empty_street / (totalRow * 1000000)) * 100
+
+
+
+# !!!!!!!!!!!
+# [Following part is commented out since it takes so much unnecessary time 
+# and I know those columns are not containing empty data]
+
+# Start_Time and End_Time validation
+#invalid_start_end_time <- subset(accidentsDB, !(as.POSIXlt(Start_Time) < as.POSIXlt(End_Time)))
+
+#if (nrow(invalid_start_end_time) > 0) {
+#  print(invalid_start_end_time)
+#} 
+
+#sum(accidentsDB$Severity == "") 
+#sum(accidentsDB$State == "")
+#sum(accidentsDB$Start_Lng == "")
+#sum(accidentsDB$Start_Lat == "")
+#sum(accidentsDB$Bump == "")
+#sum(accidentsDB$Crossing == "")
+#sum(accidentsDB$Junction == "")
+#sum(accidentsDB$Stop == "")
+#sum(accidentsDB$Traffic_Calming == "")
+#sum(accidentsDB$Traffic_Signal == "")
+
+
+#####################
+# Calculate execution time
+end.time <- Sys.time()
+time.taken <- end.time - start.time
+message("[LOG] Searching for missing or invalid info: ", time.taken)
+
+```
+
+İncelenen veri setinde geçersiz veri yoktur ancak bazı eksik veriler bulunmaktadır. Örneğin **Weather_Condition** değeri olmayan `r count_empty_weather` tane veri bulunmuştur, bu da kaza gününe ait elimizde hava durumu verisi olmadığını gösterir. Benzer şekilde **City** değeri olmayan `r count_empty_city` ve **Street** değeri olmayan `r count_empty_street` tane veri bulunmuştur. Bu sayılar fazlaymış gibi görünse de veri seti çok büyük olduğu için bu eksiklikler de görmezden gelinebilir seviyelerdedir.
+
+### Grafikler
+
+* **Eyaletlere göre kaza sayısı**
+
+```{r Number of Accidents by State, echo=FALSE, message=FALSE, warning=FALSE}
+
+# Timer set
+start.time <- Sys.time()
+#####################
+
+
+
+# Number of Accidents by State
+statecount <- accidentsDB %>%
+  group_by(State) %>%
+  summarise(n = n()) %>%
+  arrange(desc(n)) %>%
+  head(25)  # En çok kaza olan ilk 25 eyaleti seçin
+
+# bar plot of top 10 states
+ggplot(statecount[1:25,], aes(x= reorder(State, -n), y=n)) + 
+  geom_bar(colour="black", fill="lightblue", stat="identity") + 
+  labs(title="Eyaletlere Göre Kaza Sayısı", x="Eyalet", y="Kaza Sayısı") + 
+  theme(plot.title=element_text(hjust=0.5)) +
+  scale_y_continuous(labels = comma)
+
+
+
+#####################
+# Calculate execution time
+end.time <- Sys.time()
+time.taken <- end.time - start.time
+message("[LOG] Number of Accidents by State: ", time.taken)
+
+```
+
+Yukarıdaki grafikte Amerika'nın en büyük 25 eyaleti kaza sayılarına göre sıralanmıştır. En yüksek kaza sayısına sahip California'yı, şirketimizin kurulduğu eyalet olan Teksas'ı ve grafikteki en az kazaya sahip iki eyalet olan Oklahoma ve Missouri'yi daha detaylı inceleyelim.
+
+* **Eyaletlerdeki Kazaların Şiddete Göre Dağılımı**
+
+```{r Distribution of Accidents in States by Severity, echo=FALSE, message=FALSE, warning=FALSE}
+
+# Timer set
+start.time <- Sys.time()
+#####################
+
+
+
+# Severity of Accidents in CA
+ca_severity <- accidentsDB[accidentsDB$State == "CA",] %>%
+  group_by(Severity) %>%
+  summarise(n = n()) %>%
+  mutate(rf = n / sum(n))
+
+# Severity of Accidents in TX
+tx_severity <- accidentsDB[accidentsDB$State == "TX",] %>%
+  group_by(Severity) %>%
+  summarise(n = n()) %>%
+  mutate(rf = n / sum(n))
+
+# Severity of Accidents in OK
+ok_severity <- accidentsDB[accidentsDB$State == "OK",] %>%
+  group_by(Severity) %>%
+  summarise(n = n()) %>%
+  mutate(rf = n / sum(n))
+
+# Severity of Accidents in MO
+mo_severity <- accidentsDB[accidentsDB$State == "MO",] %>%
+  group_by(Severity) %>%
+  summarise(n = n()) %>%
+  mutate(rf = n / sum(n))
+
+# Creating the Graph
+par(mfrow = c(2, 2), mar = c(3, 3, 3, 3))  # Set up a 2x2 plotting grid, increase the margins
+
+barplot(ca_severity$rf, names.arg = ca_severity$Severity, main = "- California -")
+barplot(tx_severity$rf, names.arg = tx_severity$Severity, main = "- Texas -")
+barplot(ok_severity$rf, names.arg = ok_severity$Severity, main = "- Oklahoma -")
+barplot(mo_severity$rf, names.arg = mo_severity$Severity, main = "- Missouri -")
+
+
+
+#####################
+# Calculate execution time
+end.time <- Sys.time()
+time.taken <- end.time - start.time
+message("[LOG] Distribution of Accidents in States by Severity: ", time.taken)
+
+```
+
+* California'nın en çok kaza olan eyalet olduğunu görüyoruz. Bu, California'nın nüfus yoğunluğunun yüksek olması ve trafik akışının yoğun olmasından kaynaklanıyor olabilir.
+
+* Şiddet derecesi (severity) 2 olan kazaların her eyalette en yaygın kaza türü olduğunu görüyoruz. Bu, hafif kazaların trafikte en yaygın kaza türü olduğu anlamına geliyor.
+
+* Missouri'nin şiddet derecesi (severity) 3 ve 4 kazalarda diğer eyaletlerden daha yüksek bir orana sahip olduğunu görüyoruz. Bu, Missouri'nin yol koşullarının daha kötü olmasından veya sürücü davranışlarının daha riskli olmasından kaynaklanıyor olabilir.
+
+* Teksas'ın şiddet derecesi (severity) 3 kazalarda California'ya göre daha yüksek bir orana sahip olduğunu görüyoruz. Bu, Teksas'ın nüfus yoğunluğunun California'ya göre daha düşük olmasından kaynaklanıyor olabilir.
+
+Daha herhangi bir sonuca varmak için çok erken olsa da, elimizdeki verilerin yüzeysel incelenmesinden yola çıkarak aşağıdaki çıkarımları yapabiliriz:
+
+* California'da trafik güvenliğini iyileştirmek için, trafik akışının yoğun olduğu bölgelerde trafik kontrol önlemleri artırılabilir.
+* Missouri'de trafik güvenliğini iyileştirmek için, yol koşullarının iyileştirilmesi ve sürücü davranışlarının iyileştirilmesi için eğitim ve denetim çalışmaları yapılabilir.
+* Teksas'da trafik güvenliğini iyileştirmek için, nüfus yoğunluğunun düşük olduğu bölgelerde trafik güvenliği farkındalığının artırılması için çalışmalar yapılabilir.
+
+### İstatistikler
+
+* Weather_Condition sütunundaki boş değerlerin oranı: %`r format(round(perc_empty_weather,digits=3),nsmall=2)`
+* City sütunundaki boş değerlerin oranı: %`r format(round(perc_empty_city,digits=3),nsmall=2)`
+* Street sütunundaki boş değerlerin oranı: %`r format(round(perc_empty_street,digits=3),nsmall=2)`
+* Kaza şiddetlerinin eyaletlere göre dağılımı incelendiğinde elimizdeki verilerle, eksik bilgilere rağmen, son derece güçlü çıkarımlar yapılabildiği gözlemlenmiştir. Bunlardan bazıları:
+  + En çok kazanın gerçekleştiği eyalet: California
+  + En yaygın kaza şiddeti: 2 (Orta)
+  + Küçük eyaletlerde 3 ve 4 şiddetindeki kazaların oranı daha yüksek olabilmektedir.
+
+
+
+```{r Show severity graph, echo=FALSE, message=FALSE, warning=FALSE}
+
+# [Commented out since rendering this takes so much time.]
+# map("usa", fill = TRUE, col = "white", bg = "lightblue")
+# points(accidentsDB$Start_Lng, accidentsDB$Start_Lat, pch = 20, cex  = 0.01, col = "red")
+
+
+```
+
+
+# Q4 : Veri seti ön işlemesi
+
+**Analize Dahil Edilmeyen Veriler**
+
+Elimizdeki veri setinin sahip olduğu sütunlar aşağıdaki gibidir:
+
+`r data.frame(Columns)`
+
+Görüldüğü üzere buradaki özelliklerin birçoğunun projeye gerçekçi bir katkı sağlaması mümkün değildir ve bu sütunlar veri analizine dahil edilmeyecektir. Aşağıda birkaçı nedenleriyle birlikte listelenmiştir:
+
+* **ID**, her bir kazayı temsil eden özgün bir değer olduğu için ve kaza şiddeti hakkında anlamlı bilgiler sağlamadığı için çıkartılmıştır.
+* **Source**, kaza raporunu yapan şirketi veya grubu belirtir, ancak kaza şiddetini bulmak için anlamlı değildir, bu nedenle çıkartılmıştır.
+* **End_Lat** ve **End_Lng** çoğunlukla null değerleri içeriyordur veya anlamlı değildir, bu nedenle çıkartılmıştır.
+* **Description**, temel olarak kazaların şeklini özetler, her kaza için farklıdır ve analizi yapılamaz, bu nedenle çıkartılmıştır.
+* **Weather_Timestamp**, hava koşullarının ne zaman rapor edildiğini belirtir ancak kaza şiddetini belirlemede anlamlı değildir, bu nedenle çıkartılmıştır.
+* **Wind_direction**, kaza rapor edildiğindeki rüzgarın genel yönünü gösterir ancak bu  analiz için anlamlı değildir, bu nedenle çıkartılmıştır.
+* **Civil_Twilight, Nautical_Twilight, Astronomical_Twilight** ve **Sunrise_Sunset**, kazaların meydana geldiği günün saatini açıklamak için kullanılan yöntemlerdir. Bu değerler üzerinden analiz yapmak mümkün olsa da saati ve tarihi gösteren başka bir veri olduğu için bu 4 sütun gereksiz bulunmuş, bu nedenle çıkartılmıştır.
+
+**Veri Setinden Silinen Veriler**
+
+Veri Seti kalite analizi yapılırken toplam `r count_empty_street + count_empty_city + count_empty_weather` tane satırda eksik veri tespit edilmişti; bu satırlar temizlendi.
+
+```{r Converting data types and deleting empty rows, echo=FALSE, message=FALSE, warning=FALSE}
+
+# Timer set
+start.time <- Sys.time()
+#####################
+
+
+accidentsDB <- accidentsDB[accidentsDB$Weather_Condition != "", ]
+accidentsDB <- accidentsDB[accidentsDB$City != "", ]
+accidentsDB <- accidentsDB[accidentsDB$Street != "", ]
+
+accidentsDB$Severity <- as.factor(accidentsDB$Severity)
+accidentsDB$State <- as.factor(accidentsDB$State)
+accidentsDB$City <- as.factor(accidentsDB$City)
+accidentsDB$Weather_Condition <- as.factor(accidentsDB$Weather_Condition)
+
+
+
+#####################
+# Calculate execution time
+end.time <- Sys.time()
+time.taken <- end.time - start.time
+message("[LOG] Converting data types: ", time.taken)
+
+```
+
+**Değiştirilen Veri Tipleri**
+
+Faktör (factor) tipi: Sınırlı sayıda farklı değere sahip kategorik değişkenler için kullanılır. Bu, modellerin kategorik değişkenleri daha iyi anlamasına ve daha doğru tahminler yapmasına olanak tanır. Bu nedenle bazı verilerin tipi *Factor* olarak değiştirilmiştir.
+
+* **Severity**: Sınırlı sayıda farklı değere sahip olduğu için *int* yerine *factor* olarak değiştirildi.
+* **State** ve **City**: Eyalet adları kategorik değişken olduğu için *chr* yerine *factor* olarak değiştirildi.
+* **Weather_Condition**: Hava durumu değişkeni kategorik olduğu için *chr* yerine *factor* olarak değiştirildi.
+
+Bu değişimlerden sonra veri seti aşağıdaki gibidir:
+
+```{r Showing the revamped dataset, echo=FALSE, message=FALSE, warning=FALSE}
+head(accidentsDB, 10)
+```
+
+**Sonuç**
+
+Veri seti ön işleme işlemleri sonucunda, veri seti analize hazır hale getirilmiştir. Eksik veriler temizlenmiş, sayısal değerler doğru formata dönüştürülmüş ve kategorik değerler faktör tipine dönüştürülmüştür.
+
+# Q5 : Veri mühendisliği 
+
+```{r Adding a new column to the dataset, echo=FALSE, message=FALSE, warning=FALSE}
+
+# Timer set
+start.time <- Sys.time()
+#####################
+
+
+
+# Veri setine yeni sütunu ekleyerek her veri için %20 olasılıkla TRUE ve %80 olasılıkla FALSE değeri atama
+set.seed(123)  # Rastgelelik kontrolü için seed ayarla
+accidentsDB <- accidentsDB %>%
+  mutate(company_loss = sample(c(TRUE, FALSE), n(), replace = TRUE, prob = c(0.2, 0.8)))
+head(accidentsDB, 50)
+
+
+#####################
+# Calculate execution time
+end.time <- Sys.time()
+time.taken <- end.time - start.time
+message("[LOG] Adding a new column to the dataset: ", time.taken)
+
+
+```
+
+**Yeni Sütun Oluşturma**
+
+Şirketin kullanıcı veri tabanına analiz sırasında erişim sağlanamadığı için, bu eksikliği şimdilik kapatması adına, US Accidents veri setine yeni, **sentetik**, bir sütun eklendi. Bu sütun, bir kazanın şirketi etkileyip etkilemediğini gösteren bir değişkendir. [Eklenen verilerin sonucu olarak, veri setindeki kazaların %20'sinin şirketin maddi zarar görmesine neden olduğu gözlemlenmektedir.]{.ul} Gerçek kullanıcı veri tabanı analize hazır hale geldiği zaman bu veri setiyle birleştirilip daha spesifik ve gerçek sonuçlar elde edilebilir.
+
+
+# Q6 : Veri analizi
+
+* **Zamana göre kaza sayısı**
+
+```{r Accidents by Month and by Year, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE}
+
+# Timer set
+start.time <- Sys.time()
+#####################
+
+
+
+# create data frame of months
+mon_df <- accidentsDB %>%
+  select(Start_Time) %>%
+  mutate(month = month(ymd_hms(Start_Time)), 
+          year = year(ymd_hms(Start_Time))) %>%
+  group_by(year, month) %>%
+  summarise(n = length(Start_Time), .groups='keep') %>%
+  data.frame()
+
+mon_df$year <- as.factor(mon_df$year)
+mon_df <- mon_df[!is.na(mon_df$month),]
+x_labels <- min(mon_df$month):max(mon_df$month)
+
+# line plot of nationwide data by month and year
+ggplot(mon_df, aes(x = month, y = n, group = year)) +
+  geom_line(aes(color=year), size = 1) + 
+  labs(title = "Ay ve Yıllara Göre Kaza Sayısı", x = "Ay", y = "Kaza Sayısı") +
+  theme_light() +
+  theme(plot.title = element_text(hjust= 0.5)) + 
+  scale_x_continuous(labels = x_labels, breaks = x_labels, minor_breaks = NULL) + 
+  scale_y_continuous(labels = comma) +
+  scale_color_brewer(palette = "Spectral", name = "Year", guide = guide_legend(reverse = TRUE))
+
+
+
+#####################
+# Calculate execution time
+end.time <- Sys.time()
+time.taken <- end.time - start.time
+message("[LOG] Accidents by Month and by Year: ", time.taken)
+
+```
+
+Grafik incelendiğinde 2020 yılının sonlarında kaza sayısında büyük bir artış olduğu gözlemlenmiştir. Bu tarihten önceki ve sonraki kazalar arasında olan dramatik farka bakılırsa bu artış, bazı veri kaynaklarından aniden daha fazla veri toplanması ve raporlanmasından kaynaklanmış gibi görünüyor. Yine 2020 yılının Temmuz ve Ağustos aylarındaki kaza sayısındaki düşüşün nedeni ise belirsiz; ancak bu durum, o sene etkisini gösteren Covid salgını ve o dönemde daha az insanın yolda olmasıyla ilişkili olabilir.
+
+* 2020 yılında kaza raporlarında ciddi bir artış gözlemlenmiştir.
+* En çok kaza 2022 yılında raporlara geçmiştir.
+
+Analize daha spesifik bir bölge üzerinden *(Maryland)* ve daha dar bir zaman aralığında *(2023 yılından itibaren)* devam edelim.
+
+* **Konuma Göre Kaza Şiddet Grafiği**
+
+```{r Graph of Accidents on MD and Baltimore, echo=FALSE, message=FALSE, warning=FALSE}
+
+# Timer set
+start.time <- Sys.time()
+#####################
+
+
+
+MD_df <- accidentsDB[accidentsDB$State == "MD"& as.Date(accidentsDB$Start_Time) >= as.Date("2023-01-01"),]
+
+# Maryland lat long data frame
+MD_loc <- MD_df %>%
+  select(Severity, Start_Lat, Start_Lng) %>%
+  data.frame()
+
+# accident count
+MDcount <- nrow(MD_loc)
+
+# Baltimore lat long data frame
+balt_loc <- MD_loc[(MD_loc$Start_Lat>39.1977 & MD_loc$Start_Lat<39.3719)&(MD_loc$Start_Lng>(-76.7122) & MD_loc$Start_Lng<(-76.5294)), ]
+
+# create scatterplot of Maryland lat long
+ggplot(MD_loc, aes(x=Start_Lng, y=Start_Lat, col=Severity)) +
+  geom_point(size=1, shape=20) +
+  coord_equal(ratio=1) +
+  labs(title = "Maryland, Ocak 2023", 
+        x = "Boylam (Longitude)", 
+        y = "Enlem (Latitude)",
+        fill = "Severity") + 
+  theme_dark() +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  scale_color_brewer(palette = 'YlOrRd', name = 'Şiddet')
+
+# create scatterplot of Baltimore lat long
+ggplot(balt_loc, aes(x=Start_Lng, y=Start_Lat, col=Severity)) +
+  geom_point(size=1, shape=20) +
+  coord_equal(ratio=1) +
+  labs(title = "Baltimore City, Ocak 2023", 
+        x = "Boylam (Longitude)", 
+        y = "Enlem (Latitude)",
+        fill = "Severity") + 
+  theme_dark() +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  scale_color_brewer(palette = 'YlOrRd', name = 'Şiddet')
+
+
+
+#####################
+# Calculate execution time
+end.time <- Sys.time()
+time.taken <- end.time - start.time
+message("[LOG] Graph of Accidents on MD and Baltimore: ", time.taken)
+
+```
+
+Bu görselleme, **Maryland** eyaletindeki kazaların konumlarını incelemekte olup, kazaların şiddet seviyelerini renk kullanarak göstermektedir. İlk grafik eyaletin genelini kapsarken, ikinci grafik genel olarak **Baltimore City**'nin konumuna odaklanmaktadır. Beklendiği gibi, daha ciddi kazalar genellikle ana otoyollarda meydana gelmektedir; bu durum, muhtemelen araçların daha yüksek hız yapmasından dolayıdır. Baltimore City içerisinde ise, çoğu kaza genellikle şehre giden ve şehirden çıkan otoyollar üzerinde meydana gelmektedir.
+
+**Maryland**, nispeten küçük bir eyalet olmasına rağmen, bu bölgede yüksek sayıda kaza raporu ile karşılaşılmıştır. Bu durum, muhtemelen Maryland'in **Washington DC**'ye olan yakınlığı ve eyaleti geçen birçok karayolun etkisiyle ilişkilendirilebilir. **Maryland** içinde gerçekleşen kazaların çoğu 2. seviyede olup, genellikle soğuk, bulutlu, hafif yağmurlu veya fırtınalı hava koşullarında meydana gelmektedir. Daha ciddi kazalar ise genellikle daha yüksek hız sınırlarına sahip otoyollar ve yollar üzerinde gerçekleşmektedir.
+
+```{r Graph of Company Loss on MD and Baltimore, echo=FALSE, message=FALSE, warning=FALSE}
+
+# Timer set
+start.time <- Sys.time()
+#####################
+
+
+
+# Maryland lat long data frame (company_loss = true)
+MD_loc <- MD_df %>%
+  filter(company_loss == TRUE) %>%
+  select(Severity, Start_Lat, Start_Lng) %>%
+  data.frame()
+
+# accident count
+MDcustomerCount <- nrow(MD_loc)
+
+# Baltimore lat long data frame (company_loss = true)
+balt_loc <- MD_loc[(MD_loc$Start_Lat>39.1977 & MD_loc$Start_Lat<39.3719)&(MD_loc$Start_Lng>(-76.7122) & MD_loc$Start_Lng<(-76.5294)), ]
+
+# create scatterplot of Maryland lat long (company_loss = true)
+ggplot(MD_loc, aes(x=Start_Lng, y=Start_Lat, col=Severity)) +
+  geom_point(size=1, shape=20) +
+  coord_equal(ratio=1) +
+  labs(title = "Maryland, Müşteri Kazaları, Ocak 2023", 
+        x = "Boylam (Longitude)", 
+        y = "Enlem (Latitude)",
+        fill = "Şiddet") + 
+  theme_dark() +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  scale_color_brewer(palette = 'YlOrRd', name = 'Şiddet')
+
+# create scatterplot of Baltimore lat long (company_loss)
+ggplot(balt_loc, aes(x=Start_Lng, y=Start_Lat, col=Severity)) +
+  geom_point(size=1, shape=20) +
+  coord_equal(ratio=1) +
+  labs(title = "Baltimore City, Müşteri Kazaları, Ocak 2023", 
+        x = "Boylam (Longitude)", 
+        y = "Enlem (Latitude)",
+        fill = "Şiddet") + 
+  theme_dark() +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  scale_color_brewer(palette = 'YlOrRd', name = 'Şiddet')
+
+
+
+#####################
+# Calculate execution time
+end.time <- Sys.time()
+time.taken <- end.time - start.time
+message("[LOG] Graph of Company Loss on MD and Baltimore: ", time.taken)
+
+```
+
+Müşteri kazaları, şirket tarafından sigortalanmış araçların karıştığı kazalardır. Maryland'de her yıl yaklaşık `r MDcount` kaza meydana gelmektedir. Bu kazaların yaklaşık %`r round((MDcustomerCount/MDcount) * 100)` kadarı müşteri kazalarıdır. Bu durum ciddi bir zarara neden olmaktadır ve müşteri kazalarının oranını azaltmak şirket giderlerinde ciddi bir azalmaya sebep olacaktır.
+
+* **Belirleyici Yol Özelliklerine Göre Kaza Grafiği**
+
+```{r Graph of Traffic Categories, echo=FALSE, message=FALSE, warning=FALSE}
+
+# Timer set
+start.time <- Sys.time()
+#####################
+
+
+
+filtered_data <- accidentsDB %>%
+  select(Junction, Bump, Crossing, Stop, Traffic_Calming, Traffic_Signal)
+
+# Her bir özelliğin yüzde oranlarını hesaplayın
+percentage_true <- colMeans(filtered_data, na.rm = TRUE)
+
+total_counts <- colSums(filtered_data, na.rm = TRUE)
+
+# Sonuçları veri çerçevesine dönüştürün
+result_df <- data.frame(
+  Feature = names(percentage_true),
+  Percentage_True = percentage_true,
+  Total_Count = total_counts
+)
+
+# Grafik oluşturun
+ggplot(result_df, aes(x = Feature, y = Percentage_True)) +
+  geom_bar(stat = "identity", fill = "skyblue", color = "black") +
+  geom_text(aes(label = paste0(sprintf("%.2f", Percentage_True * 100), "%")),
+            vjust = -0.5, color = "black", size = 3) +  # Yüzde değerlerini ekleyin
+  geom_text(aes(label = paste0("[", Total_Count, "]")),
+            vjust = 1.5, color = "black", size = 3) +  # Toplam sayıları ekleyin
+  labs(title = "Yol Özelliklerinin Trafik Kazalarına Oranı",
+       x = "Belirleyici Özellikler",
+       y = "Kaza Oranı") +
+  theme_minimal()
+
+
+
+#####################
+# Calculate execution time
+end.time <- Sys.time()
+time.taken <- end.time - start.time
+message("[LOG] Graph of Traffic Categories: ", time.taken)
+
+```
+
+Bu grafikten çok önemli bazı çıkarımlar yapılabilir.
+
+* Yaya Geçitleri Önemli Bir Risk Bölgesidir:
+
+  + Yaya geçitleri, tüm kazaların %12'siyle ilişkilidir. Bu, özellikle yaya geçitlerinin trafik güvenliği açısından önemli bir risk bölgesi olduğunu gösterir.
+
+* Trafik Sinyalleri ve Kavşaklar Sıkça Kazaların Olduğu Yerlerdir:
+
+  + Trafik sinyalleri ve kavşaklar, sırasıyla %15 ve %7 ile kazaların sıkça gerçekleştiği bölgelerdir. Bu alanlarda güvenliği artırmak için ek tedbirler alınması gerekebilir.
+
+* Dur (Stop) İşareti ve Trafik Sakinleştirme Alanlarında Kazaların Oranı Düşük:
+
+  + Dur işaretinin kazalarda %3 ile ilişkilendirilmiş olması, sinyaller ve kavşaklar gibi diğer trafik kontrol noktalarına göre daha az risk içerdiğini gösterir. Benzer şekilde trafik sakinleştirme bölgelerinin kazalarla sadece %0.10 oranında bağlantılı olması da bu tür bölgelerin genellikle daha güvenli olduğunu gösterir.
+
+* Tümseklerin (Bump) Bulunduğu Bölgelerde Düşük Kaza Miktarı:
+
+  + Tümseklerin %0.05'lik düşük oranı, bu tür işaretlerin genellikle kazalarla çok az ilişkili olduğunu, veya gerçekten de kazaları azalttığını gösterir.
+
+**Genel Değerlendirme ve Öneriler:**
+
+Trafik güvenliği önlemleri, özellikle yaya geçitleri, trafik sinyalleri ve kavşaklarda yoğunlaştırılmalıdır.
+Kazaların az olduğu bölgelerde dahi, önleyici tedbirlerin alınması ve sürücülerin bilinçlendirilmesi önemlidir.
+Müşterilerin, özellikle yoğun kazaların olduğu bölgelerde uyarılması gerekmektedir.
+Bu çıkarımlar, projedeki trafik güvenliği önlemlerinin etkili bir şekilde planlanması ve uygulanması için rehberlik edebilir. Ancak, yerel koşullar ve spesifik durumlar göz önüne alınarak daha ayrıntılı bir analiz yapmak, ve bu verileri diğer verilerle karşılaştırmak her zaman faydalı olacaktır. Yine de şimdilik bu veriler üzerinde tatmin edici çıkarımlar yapılmıştır.
+
+* **Yüzdelik Kaza - Saat Grafiği**
+
+```{r Hourly Distribution of Accidents, echo=FALSE, message=FALSE, warning=FALSE}
+
+# Timer set
+start.time <- Sys.time()
+#####################
+
+
+
+sample_data <- data.frame(AccidentTime = accidentsDB$Start_Time)
+
+# Saat sütununu POSIXct türüne dönüştürün
+sample_data$AccidentTime <- as.POSIXct(sample_data$AccidentTime, format="%H:%M:%S", tz="GMT")
+
+# Saat sütunundan saat bilgisini çıkarın ve Hour adında yeni bir sütun oluşturun
+sample_data$Hour <- format(sample_data$AccidentTime, format="%H")
+
+# Toplam kaza sayısını ve saatlik yüzde oranlarını hesaplayın
+total_accidents <- nrow(sample_data)
+hourly_percentage <- count(sample_data, Hour) %>%
+  mutate(Percentage = n / total_accidents * 100)
+
+# Grafik oluşturun
+ggplot(hourly_percentage, aes(x = Hour, y = Percentage)) +
+  geom_bar(stat = "identity", fill = "skyblue", color = "black") +
+  geom_text(aes(label = paste0(sprintf("%.1f", Percentage), "%")),
+            vjust = -0.5, color = "black", size = 3) +  # Yüzde değerlerini ekleyin
+  labs(title = "Kazaların Saatlere Dağılımı",
+       x = "Saat",
+       y = "Kaza Oranı") +
+  scale_y_continuous(labels = scales::percent_format(scale = 1)) +  # Y ekseni yüzde formatında gösterilsin
+  theme_minimal()
+
+
+
+#####################
+# Calculate execution time
+end.time <- Sys.time()
+time.taken <- end.time - start.time
+message("[LOG] Hourly Distribution of Accidents: ", time.taken)
+
+```
+
+Gün içinde en yüksek kaza sıklığı, özellikle saat 7-8 arası ve 15-17 arasında gözlemlenmiştir. Bu saat dilimlerinde toplam kaza sayısının yüksek olmasının, yaklaşık olarak iş saatlerine denk gelmesi dikkat çekicidir. Bu saatlerde trafik yoğunluğunun artması, sürücülerin aceleyle hareket etmelerine ve kaza riskini artırmalarına neden olabilir. Proje kapsamında müşterilerin uyarılmasını gerektirecek veriler analiz edilirken bu grafikten de çıkarımlar yapılabilir.
+
+# Q7 : Sonuç değerlendirme, tavsiyeler
+
+Proje genelinde yapılan operasyonlar, veri setinin temizlenmesi ve analiz edilmesi için kullanılan yöntemler açısından geçerlidir. Veri seti, eksik veya tutarsız verilerden temizlenmiştir. Analiz, doğru istatistiksel yöntemler kullanılarak gerçekleştirilmiştir.
+
+**Bulunan Sonuçlar**
+
+Bulunan sonuçlar, projenin ana problemini çözmeye yardımcı olacak önemli bilgiler sağlamaktadır. Örneğin, kazaların hangi yol özelliklerinde daha sık meydana geldiğini belirlemek, kazaları azaltmak için önlemler almak için değerli bilgiler sağlayabilir.
+
+Örneğin, trafik sinyali yakınlarında meydana gelen kazaların daha yaygın olduğunun belirlenmesi, trafik sinyali yakınlarında daha dikkatli sürüş eğitimi verilmesi gerektiği fikrini desteklemektedir.
+
+**Analiz ve Sonuçların Kuvvetli ve Zayıf Yönleri**
+
+Analiz ve sonuçların güçlü yönleri şunlardır:
+
+* Veri seti, eksik veya tutarsız verilerden temizlenmiştir.
+* Çok kapsamlı veriler üzerinde çalışılmıştır.
+* Analiz, doğru istatistiksel yöntemler kullanılarak gerçekleştirilmiştir.
+* Sonuçlar, projenin ana problemini çözmeye yardımcı olacak önemli bilgiler sağlamaktadır.
+
+Analiz ve sonuçların zayıf yönleri şunlardır:
+
+* Analizde müşteri veritabanı gibi gerçek şirket verileri de kullanılabilirdi ve daha tutarlı sonuçlar elde edilebilirdi.
+* Analiz, daha fazla istatistik ve grafik içerebilirdi. Elde edilen grafikler diğer verilerle de karşılaştırılıp daha kesin ve spesifik bilgiler elde edilebilirdi. Bu da müşteriler için planladığımız mobil uygulamada daha tutarlı ve yerinde analizler yaparak projenin başarı oranını artırabilirdi. Ancak zaman darlığı sebebiyle çok kapsamlı bir analiz yapılamadı.
+
+**Sonuç Olarak**
+
+Bu proje kapsamında, araç kazalarının trafik müdahalesi ile ilişkili faktörlerini anlamak için daha fazla bilgiye ve analize ihtiyaç olduğu sonucuna varılmıştır.
+
+Ayrıca, bu veri setindeki eksik değerlerin daha iyi tanımlanması gerekmektedir. Özellikle, değişkenlerde birçok NA değeri bulunmaktadır ve bu yüzden analize dahil bile edilmemişlerdir. 
+
+Bunun yanı sıra, araç kazalarının trafik müdahalesine neden olan diğer potansiyel faktörleri ve hangi faktörlerin en önemli olduğunu belirleme yöntemlerini daha ayrıntılı bir şekilde incelememiz gerekmektedir.
+
+Sonuç olarak, bu projenin bulgularının daha fazla araştırma ve detaylı analizlere dayanarak güçlendirilmesi, gelecekteki çalışmalara rehberlik etmesi önemlidir. Elde edilen sonuçlar, trafik güvenliği konusundaki stratejilerin daha etkili bir şekilde geliştirilmesi ve uygulanması için temel oluşturabilir ve bu haliyle bile müşterilerin daha az kazaya karışmasını sağlayacak veriler elde edilebilir. Yine de bunun dramatik bir fark yaratabilmesi için daha detaylı verilere ve analizlere ihtiyaç vardır.
+
+```{r echo=FALSE, eval=FALSE, message=FALSE, warning=FALSE, results='hide'}
+library(testthat)
+
+source("testQ3.R")
+source("testQ4.R")
+source("testQ5.R")
+source("testQ6.R")
+```
